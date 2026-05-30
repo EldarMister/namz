@@ -1,0 +1,7 @@
+builds/
+design/
+designe/
+.expo/
+.vscode/
+*.log
+expo-*.log

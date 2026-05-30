@@ -1,31 +1,22 @@
-import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { COLORS, FONTS } from '../constants/theme';
 import { formatPrayerTime } from '../utils/prayerTimes';
 
-export default function PrayerRow({ prayer, isActive, isLast }) {
+export default function PrayerRow({ prayer, isActive, isDense }) {
   const hasTime = Boolean(prayer.time);
 
   return (
-    <View style={[styles.container, isActive && styles.activeContainer]}>
-      <View style={styles.content}>
-        <View style={styles.prayerIconWrap}>
-          <MaterialCommunityIcons
-            name={prayer.icon}
-            size={28}
-            color={COLORS.accent}
-          />
-        </View>
+    <View style={[styles.container, isDense && styles.denseContainer, isActive && styles.activeContainer]}>
+      <View style={[styles.content, isDense && styles.denseContent]}>
+        <Text style={[styles.name, isDense && styles.denseName, isActive && styles.activeText]}>
+          {prayer.name}
+        </Text>
 
-        <Text style={[styles.name, isActive && styles.activeText]}>{prayer.name}</Text>
-
-        <Text style={[styles.time, !hasTime && styles.placeholderTime, isActive && styles.activeText]}>
+        <Text style={[styles.time, isDense && styles.denseTime, !hasTime && styles.placeholderTime, isActive && styles.activeText]}>
           {formatPrayerTime(prayer.time)}
         </Text>
       </View>
-
-      {!isLast && <View style={styles.divider} />}
     </View>
   );
 }
@@ -36,6 +27,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
+  denseContainer: {
+    minHeight: 36,
+  },
   activeContainer: {
     backgroundColor: 'rgba(201, 168, 76, 0.12)',
     borderRadius: 16,
@@ -45,9 +39,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     minHeight: 42,
   },
-  prayerIconWrap: {
-    alignItems: 'center',
-    width: 52,
+  denseContent: {
+    minHeight: 34,
   },
   name: {
     color: COLORS.text,
@@ -55,12 +48,18 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.regular,
     fontSize: 21,
   },
+  denseName: {
+    fontSize: 19,
+  },
   time: {
     color: COLORS.text,
-    fontFamily: FONTS.display,
-    fontSize: 28,
+    fontFamily: FONTS.semibold,
+    fontSize: 25,
     textAlign: 'right',
     width: 88,
+  },
+  denseTime: {
+    fontSize: 22,
   },
   placeholderTime: {
     color: COLORS.muted,
@@ -69,10 +68,5 @@ const styles = StyleSheet.create({
   },
   activeText: {
     color: COLORS.accent,
-  },
-  divider: {
-    backgroundColor: COLORS.divider,
-    height: StyleSheet.hairlineWidth,
-    marginLeft: 52,
   },
 });

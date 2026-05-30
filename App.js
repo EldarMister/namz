@@ -1,48 +1,53 @@
 import MaterialCommunityIcons from '@expo/vector-icons/MaterialCommunityIcons';
-import Ionicons from '@expo/vector-icons/Ionicons';
 import { CormorantGaramond_600SemiBold } from '@expo-google-fonts/cormorant-garamond/600SemiBold';
 import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular';
 import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold';
-import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import * as Notifications from 'expo-notifications';
-import { StatusBar } from 'expo-status-bar';
+import { NavigationContainer } from '@react-navigation/native';
 import { useFonts } from 'expo-font';
+import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { enableScreens } from 'react-native-screens';
 
+import { t } from './src/constants/i18n';
 import { COLORS, FONTS } from './src/constants/theme';
 import { AppSettingsProvider, useAppSettings } from './src/context/AppSettingsContext';
 import CompassScreen from './src/screens/CompassScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+enableScreens(true);
 
 const Tab = createBottomTabNavigator();
 
 function getTabIcon(routeName) {
-  if (routeName === 'Главный') {
+  if (routeName === 'Home') {
     return 'home';
   }
 
-  if (routeName === 'Компас') {
+  if (routeName === 'Compass') {
     return 'compass-outline';
   }
 
   return 'cog-outline';
 }
 
+function getTabLabel(routeName, language) {
+  if (routeName === 'Home') {
+    return t(language, 'home');
+  }
+
+  if (routeName === 'Compass') {
+    return t(language, 'compass');
+  }
+
+  return t(language, 'settings');
+}
+
 function AppTabs() {
   const { height } = useWindowDimensions();
-  const { isReady } = useAppSettings();
+  const { isReady, settings } = useAppSettings();
   const isCompact = height < 780;
 
   if (!isReady) {
@@ -53,7 +58,7 @@ function AppTabs() {
     <NavigationContainer>
       <StatusBar style="light" translucent />
       <Tab.Navigator
-        initialRouteName="Главный"
+        initialRouteName="Home"
         screenOptions={({ route }) => ({
           headerShown: false,
           tabBarActiveTintColor: COLORS.accent,
@@ -65,6 +70,7 @@ function AppTabs() {
               color={color}
             />
           ),
+          tabBarLabel: getTabLabel(route.name, settings.language),
           tabBarLabelStyle: styles.tabLabel,
           tabBarStyle: [
             styles.tabBar,
@@ -80,9 +86,9 @@ function AppTabs() {
           sceneStyle: styles.scene,
         })}
       >
-        <Tab.Screen name="Главный" component={HomeScreen} />
-        <Tab.Screen name="Компас" component={CompassScreen} />
-        <Tab.Screen name="Настройки" component={SettingsScreen} />
+        <Tab.Screen name="Home" component={HomeScreen} />
+        <Tab.Screen name="Compass" component={CompassScreen} />
+        <Tab.Screen name="Settings" component={SettingsScreen} />
       </Tab.Navigator>
     </NavigationContainer>
   );
@@ -93,7 +99,6 @@ export default function App() {
     [FONTS.regular]: Inter_400Regular,
     [FONTS.semibold]: Inter_600SemiBold,
     [FONTS.display]: CormorantGaramond_600SemiBold,
-    ...Ionicons.font,
     ...MaterialCommunityIcons.font,
   });
 
@@ -119,11 +124,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   tabBar: {
-    backgroundColor: COLORS.navBackground,
-    borderColor: COLORS.border,
-    borderRadius: 34,
-    borderTopWidth: 1,
-    borderWidth: 1,
+    backgroundColor: 'transparent',
+    borderColor: 'transparent',
+    borderTopWidth: 0,
+    borderWidth: 0,
     elevation: 0,
     left: '7%',
     position: 'absolute',

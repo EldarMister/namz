@@ -1,49 +1,82 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
+import { DEFAULT_LANGUAGE, normalizeLanguage } from '../constants/i18n';
+import { DEFAULT_CITY_ID, normalizeCityId } from '../constants/kyrgyzstanCities';
 import { DEFAULT_NOTIFICATION_PREFS } from '../constants/prayers';
+import { APP_SETTINGS_STORAGE_KEY } from '../constants/storageKeys';
 
-const STORAGE_KEY = '@namaz_app_settings';
+const SETTINGS_VERSION = 3;
+const DEFAULT_WALLPAPER_ID = 'sunset-mosque';
 
 export const BUILT_IN_WALLPAPERS = [
   {
+    id: 'sunset-mosque',
+    labelKey: 'sunsetMosque',
+    source: require('../assets/wallpapers/sunset-mosque.jpg'),
+  },
+  {
     id: 'mosque-night',
-    label: 'Ночная мечеть',
+    labelKey: 'nightMosque',
     source: require('../assets/wallpapers/mosque-night.jpg'),
   },
 ];
 
 const DEFAULT_SETTINGS = {
+  settingsVersion: SETTINGS_VERSION,
+  language: DEFAULT_LANGUAGE,
   wallpaper: {
     type: 'builtin',
-    id: 'mosque-night',
+    id: DEFAULT_WALLPAPER_ID,
     uri: null,
   },
   notifications: DEFAULT_NOTIFICATION_PREFS,
+  selectedCityId: DEFAULT_CITY_ID,
   showIshraq: true,
   showTahajjud: true,
 };
 
 const AppSettingsContext = createContext(null);
 
+function mergeWallpaper(savedWallpaper, { migrateDefaultWallpaper = false } = {}) {
+  if (savedWallpaper?.type === 'custom' && savedWallpaper.uri) {
+    return savedWallpaper;
+  }
+
+  const shouldUseDefaultWallpaper =
+    !savedWallpaper?.id ||
+    (migrateDefaultWallpaper && savedWallpaper.id === 'mosque-night');
+
+  return {
+    ...DEFAULT_SETTINGS.wallpaper,
+    ...savedWallpaper,
+    id: shouldUseDefaultWallpaper ? DEFAULT_WALLPAPER_ID : savedWallpaper.id,
+    uri: null,
+  };
+}
+
 function mergeSettings(savedSettings) {
+  // Старые сборки использовали ночную мечеть как дефолт. Один раз переводим
+  // такие сохранённые настройки на новый фон, но не ломаем ручной выбор дальше.
+  const migrateDefaultWallpaper = !savedSettings?.settingsVersion;
+
   return {
     ...DEFAULT_SETTINGS,
-    wallpaper: {
-      ...DEFAULT_SETTINGS.wallpaper,
-      ...savedSettings?.wallpaper,
-    },
+    settingsVersion: SETTINGS_VERSION,
+    wallpaper: mergeWallpaper(savedSettings?.wallpaper, { migrateDefaultWallpaper }),
     notifications: {
       ...DEFAULT_NOTIFICATION_PREFS,
       ...savedSettings?.notifications,
     },
+    language: normalizeLanguage(savedSettings?.language),
+    selectedCityId: normalizeCityId(savedSettings?.selectedCityId),
     showIshraq: savedSettings?.showIshraq ?? DEFAULT_SETTINGS.showIshraq,
     showTahajjud: savedSettings?.showTahajjud ?? DEFAULT_SETTINGS.showTahajjud,
   };
 }
 
 async function persistSettings(nextSettings) {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextSettings));
+  await AsyncStorage.setItem(APP_SETTINGS_STORAGE_KEY, JSON.stringify(nextSettings));
 }
 
 export function AppSettingsProvider({ children }) {
@@ -55,7 +88,7 @@ export function AppSettingsProvider({ children }) {
 
     async function loadSettings() {
       try {
-        const rawValue = await AsyncStorage.getItem(STORAGE_KEY);
+        const rawValue = await AsyncStorage.getItem(APP_SETTINGS_STORAGE_KEY);
         const parsedValue = rawValue ? JSON.parse(rawValue) : null;
 
         if (isMounted) {
@@ -124,6 +157,26 @@ export function AppSettingsProvider({ children }) {
     [updateSettings]
   );
 
+  const setLanguage = useCallback(
+    (language) => {
+      updateSettings((currentSettings) => ({
+        ...currentSettings,
+        language: normalizeLanguage(language),
+      }));
+    },
+    [updateSettings]
+  );
+
+  const setSelectedCity = useCallback(
+    (cityId) => {
+      updateSettings((currentSettings) => ({
+        ...currentSettings,
+        selectedCityId: normalizeCityId(cityId),
+      }));
+    },
+    [updateSettings]
+  );
+
   const setGeneralOption = useCallback(
     (optionKey, enabled) => {
       updateSettings((currentSettings) => ({
@@ -153,15 +206,19 @@ export function AppSettingsProvider({ children }) {
       selectBuiltInWallpaper,
       selectCustomWallpaper,
       setGeneralOption,
+      setLanguage,
       setPrayerNotification,
+      setSelectedCity,
     }),
     [
       isReady,
       selectBuiltInWallpaper,
       selectCustomWallpaper,
-      setGeneralOption,
       selectedWallpaperSource,
+      setGeneralOption,
+      setLanguage,
       setPrayerNotification,
+      setSelectedCity,
       settings,
     ]
   );

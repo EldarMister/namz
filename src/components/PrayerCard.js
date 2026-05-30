@@ -4,14 +4,17 @@ import { COLORS } from '../constants/theme';
 import PrayerRow from './PrayerRow';
 
 export default function PrayerCard({ prayers, activePrayerKey }) {
+  const isDense = prayers.length > 6;
+
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, isDense && styles.denseCard]}>
       {prayers.map((prayer, index) => (
         <PrayerRow
           key={prayer.key}
           prayer={prayer}
           isActive={prayer.key === activePrayerKey}
           isLast={index === prayers.length - 1}
+          isDense={isDense}
         />
       ))}
     </View>
@@ -29,5 +32,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 10,
     width: '76%',
+  },
+  denseCard: {
+    paddingVertical: 8,
   },
 });

@@ -2,24 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { COLORS, FONTS } from '../constants/theme';
+import { getRemainingTime } from '../utils/countdown';
 
-function getRemainingTime(targetDate) {
-  if (!targetDate) {
-    return '--:--:--';
-  }
-
-  const diff = Math.max(0, targetDate.getTime() - Date.now());
-  const totalSeconds = Math.floor(diff / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  return [hours, minutes, seconds]
-    .map((unit) => String(unit).padStart(2, '0'))
-    .join(':');
-}
-
-export default function CountdownTimer({ nextPrayer, onElapsed }) {
+export default function CountdownTimer({ label, nextPrayer, onElapsed }) {
   const [tick, setTick] = useState(0);
   const handledTargetRef = useRef(null);
   const hasTime = Boolean(nextPrayer?.time);
@@ -50,7 +35,7 @@ export default function CountdownTimer({ nextPrayer, onElapsed }) {
 
   return (
     <View style={styles.card}>
-      <Text style={styles.label}>ДО СЛЕДУЮЩЕГО НАМАЗА</Text>
+      <Text style={styles.label}>{label}</Text>
       <Text style={[styles.timer, !hasTime && styles.placeholderTimer]}>{remainingTime}</Text>
     </View>
   );
@@ -77,9 +62,9 @@ const styles = StyleSheet.create({
   },
   timer: {
     color: COLORS.text,
-    fontFamily: FONTS.display,
-    fontSize: 48,
-    lineHeight: 52,
+    fontFamily: FONTS.semibold,
+    fontSize: 42,
+    lineHeight: 48,
   },
   placeholderTimer: {
     color: COLORS.muted,
