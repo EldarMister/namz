@@ -3,14 +3,19 @@ import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
 import { useEffect, useRef, useState } from 'react';
 import {
-  Animated,
-  Easing,
   Platform,
   StyleSheet,
   Text,
   Vibration,
   View,
 } from 'react-native';
+import Reanimated, {
+  Easing,
+  type SharedValue,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { getCityName } from '../constants/kyrgyzstanCities';
@@ -106,7 +111,7 @@ function getMaxHeadingStep(accuracy: number | null) {
   return 48;
 }
 
-function animateRotation(value: Animated.Value, rotationRef: { current: number }, target: number) {
+function animateRotation(value: SharedValue<number>, rotationRef: { current: number }, target: number) {
   const nextRotation = getShortestRotation(rotationRef.current, target);
   const delta = getAngleDelta(rotationRef.current, nextRotation);
 
@@ -115,20 +120,9 @@ function animateRotation(value: Animated.Value, rotationRef: { current: number }
   }
 
   rotationRef.current = nextRotation;
-  value.stopAnimation();
-
-  Animated.timing(value, {
+  value.value = withTiming(nextRotation, {
     duration: ROTATION_ANIMATION_MS,
-    easing: Easing.out(Easing.cubic),
-    toValue: nextRotation,
-    useNativeDriver: Platform.OS !== 'web',
-  }).start();
-}
-
-function rotationInterpolation(value: Animated.Value) {
-  return value.interpolate({
-    inputRange: [-1080, 0, 1080],
-    outputRange: ['-1080deg', '0deg', '1080deg'],
+    easing: Easing.linear,
   });
 }
 
@@ -171,8 +165,8 @@ export default function CompassScreen() {
   const [sensorAvailable, setSensorAvailable] = useState(Platform.OS !== 'web');
   const [isAligned, setIsAligned] = useState(false);
   const [needsCalibration, setNeedsCalibration] = useState(false);
-  const dialRotation = useRef(new Animated.Value(0)).current;
-  const arrowRotation = useRef(new Animated.Value(0)).current;
+  const dialRotation = useSharedValue(0);
+  const arrowRotation = useSharedValue(0);
   const dialRotationRef = useRef(0);
   const arrowRotationRef = useRef(0);
   const headingRef = useRef(0);
@@ -356,8 +350,12 @@ export default function CompassScreen() {
     updateCompassRotations(headingRef.current);
   }, [finalHexAngle]);
 
-  const dialRotate = rotationInterpolation(dialRotation);
-  const arrowRotate = rotationInterpolation(arrowRotation);
+  const dialAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${dialRotation.value}deg` }],
+  }));
+  const arrowAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${arrowRotation.value}deg` }],
+  }));
 
   return (
     <View style={styles.screen}>
@@ -407,7 +405,7 @@ export default function CompassScreen() {
           <View style={styles.compassBox}>
             <View style={styles.outerHalo} />
 
-            <Animated.View style={[styles.dial, { transform: [{ rotate: dialRotate }] }]}>
+            <Reanimated.View style={[styles.dial, dialAnimatedStyle]}>
               {TICKS.map((degree) => (
                 <View
                   key={degree}
@@ -443,7 +441,7 @@ export default function CompassScreen() {
                   {getDegreeLabel(degree)}
                 </Text>
               ))}
-            </Animated.View>
+            </Reanimated.View>
 
             <LinearGradient
               colors={['#102A8C', '#1764FF', '#24D8EF']}
@@ -454,11 +452,11 @@ export default function CompassScreen() {
             <View style={styles.blueRingShade} />
             <View style={styles.centerCore} />
 
-            <Animated.View style={[styles.qiblaPointer, { transform: [{ rotate: arrowRotate }] }]}>
+            <Reanimated.View style={[styles.qiblaPointer, arrowAnimatedStyle]}>
               <View style={styles.qiblaLine} />
               <View style={styles.qiblaDot} />
               <KaabaMarker />
-            </Animated.View>
+            </Reanimated.View>
 
             <View style={styles.centerPin} />
           </View>

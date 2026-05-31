@@ -31,25 +31,6 @@ function formatCountdown(minutes) {
   return `${hours}:${String(restMinutes).padStart(2, '0')}`;
 }
 
-function formatRelativeTime(language, minutes) {
-  if (minutes <= 0) {
-    return language === 'ru' ? 'сейчас' : 'азыр';
-  }
-
-  if (minutes < 60) {
-    return language === 'ru' ? `через ${minutes} мин` : `${minutes} мүнөттөн кийин`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const restMinutes = minutes % 60;
-
-  if (language === 'ru') {
-    return restMinutes ? `через ${hours} ч ${restMinutes} мин` : `через ${hours} ч`;
-  }
-
-  return restMinutes ? `${hours} с ${restMinutes} мүнөттөн кийин` : `${hours} сааттан кийин`;
-}
-
 function getWidgetIconVariant(prayerKey) {
   if (['fajr', 'maghrib', 'isha', 'tahajjud'].includes(prayerKey)) {
     return 'moon';
@@ -91,12 +72,9 @@ export function buildPrayerWidgetData(settings = DEFAULT_WIDGET_SETTINGS, now = 
     city: getCityName(widgetSettings.selectedCityId, widgetSettings.language),
     countdownText: formatCountdown(minutes),
     iconVariant: getWidgetIconVariant(nextPrayer?.key),
-    label: widgetSettings.language === 'ru' ? 'Следующий намаз' : 'Кийинки намаз',
     prayerName,
     prayerSummary: `${prayerName} • ${prayerTime}`,
-    relativeTime: formatRelativeTime(widgetSettings.language, minutes),
     time: prayerTime,
-    updatedAt: formatPrayerTime(now),
   };
 }
 

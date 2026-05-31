@@ -57,9 +57,9 @@
               "name": "PrayerTimes",
               "label": "Namaz",
               "description": "Следующий намаз и время до него",
-              "minWidth": "160dp",
+              "minWidth": "210dp",
               "minHeight": "72dp",
-              "targetCellWidth": 2,
+              "targetCellWidth": 3,
               "targetCellHeight": 1,
               "resizeMode": "none",
               "updatePeriodMillis": 1800000
