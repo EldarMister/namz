@@ -5,7 +5,7 @@ import { Platform } from 'react-native';
 import { DEFAULT_LANGUAGE, normalizeLanguage } from '../constants/i18n';
 import { DEFAULT_CITY_ID, getCityName, normalizeCityId } from '../constants/kyrgyzstanCities';
 import { APP_SETTINGS_STORAGE_KEY } from '../constants/storageKeys';
-import { getNextPrayer, getPrayerSchedule, formatPrayerTime } from './prayerTimes';
+import { formatPrayerTime, getNextPrayer, getPrayerSchedule } from './prayerTimes';
 
 export const PRAYER_WIDGET_NAME = 'PrayerTimes';
 
@@ -22,6 +22,13 @@ function minutesUntil(date, now) {
   }
 
   return Math.max(0, Math.ceil((date.getTime() - now.getTime()) / 60000));
+}
+
+function formatCountdown(minutes) {
+  const hours = Math.floor(minutes / 60);
+  const restMinutes = minutes % 60;
+
+  return `${hours}:${String(restMinutes).padStart(2, '0')}`;
 }
 
 function formatRelativeTime(language, minutes) {
@@ -41,6 +48,14 @@ function formatRelativeTime(language, minutes) {
   }
 
   return restMinutes ? `${hours} с ${restMinutes} мүнөттөн кийин` : `${hours} сааттан кийин`;
+}
+
+function getWidgetIconVariant(prayerKey) {
+  if (['fajr', 'maghrib', 'isha', 'tahajjud'].includes(prayerKey)) {
+    return 'moon';
+  }
+
+  return 'sun';
 }
 
 export function normalizeWidgetSettings(settings = {}) {
@@ -69,13 +84,18 @@ export function buildPrayerWidgetData(settings = DEFAULT_WIDGET_SETTINGS, now = 
   const schedule = getPrayerSchedule(widgetSettings.selectedCityId, now, scheduleOptions);
   const nextPrayer = getNextPrayer(schedule, widgetSettings.selectedCityId, now, scheduleOptions);
   const minutes = minutesUntil(nextPrayer?.time, now);
+  const prayerTime = formatPrayerTime(nextPrayer?.time);
+  const prayerName = nextPrayer?.name || '';
 
   return {
     city: getCityName(widgetSettings.selectedCityId, widgetSettings.language),
+    countdownText: formatCountdown(minutes),
+    iconVariant: getWidgetIconVariant(nextPrayer?.key),
     label: widgetSettings.language === 'ru' ? 'Следующий намаз' : 'Кийинки намаз',
-    prayerName: nextPrayer?.name || '',
+    prayerName,
+    prayerSummary: `${prayerName} • ${prayerTime}`,
     relativeTime: formatRelativeTime(widgetSettings.language, minutes),
-    time: formatPrayerTime(nextPrayer?.time),
+    time: prayerTime,
     updatedAt: formatPrayerTime(now),
   };
 }

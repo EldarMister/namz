@@ -1,4 +1,5 @@
-import { LinearGradient } from 'expo-linear-gradient';
+﻿import { LinearGradient } from 'expo-linear-gradient';
+import * as Location from 'expo-location';
 import { Magnetometer } from 'expo-sensors';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -18,12 +19,16 @@ import { useAppSettings } from '../context/AppSettingsContext';
 import { normalizeDegrees, useQibla } from '../hooks/useQibla';
 
 const COMPASS_SIZE = 326;
-const SENSOR_INTERVAL_MS = 70;
-const MAGNETOMETER_VECTOR_SMOOTHING = 0.22;
-const HEADING_NOISE_FLOOR = 0.85;
+const SENSOR_INTERVAL_MS = 16;
+const MAGNETOMETER_VECTOR_SMOOTHING = 0.38;
+const HEADING_NOISE_FLOOR = 0.22;
+const MAGNETIC_FIELD_MIN_UT = 25;
+const MAGNETIC_FIELD_MAX_UT = 70;
+const MAGNETIC_FIELD_EXTREME_MIN_UT = 10;
+const MAGNETIC_FIELD_EXTREME_MAX_UT = 120;
 const ALIGNMENT_TOLERANCE_DEGREES = 3;
 const ALIGNMENT_VIBRATION_MS = 85;
-const ROTATION_ANIMATION_MS = 170;
+const ROTATION_ANIMATION_MS = 42;
 const TICKS = Array.from({ length: 72 }, (_, index) => index * 5);
 const DEGREE_LABELS = Array.from({ length: 12 }, (_, index) => index * 30);
 
@@ -54,44 +59,70 @@ function getAbsoluteAngleDelta(from: number, to: number) {
 function getHeadingSmoothing(delta: number) {
   const absDelta = Math.abs(delta);
 
-  if (absDelta > 45) {
-    return 0.36;
+  if (absDelta > 80) {
+    return 0.95;
   }
 
-  if (absDelta > 20) {
-    return 0.28;
+  if (absDelta > 35) {
+    return 0.78;
   }
 
-  if (absDelta > 8) {
-    return 0.2;
+  if (absDelta > 12) {
+    return 0.58;
   }
 
-  return 0.14;
+  if (absDelta > 4) {
+    return 0.42;
+  }
+
+  return 0.3;
 }
 
 function getHeadingFromMagnetometer({ x, y }: { x: number; y: number }) {
   return normalizeDegrees(toDegrees(Math.atan2(y, x)) - 90);
 }
 
+function getMagneticFieldMagnitude({ x, y, z }: { x: number; y: number; z: number }) {
+  return Math.sqrt(x * x + y * y + z * z);
+}
+
+function isMagneticFieldReliable(magnitude: number) {
+  return magnitude >= MAGNETIC_FIELD_MIN_UT && magnitude <= MAGNETIC_FIELD_MAX_UT;
+}
+
+function isMagneticFieldUsable(magnitude: number) {
+  return magnitude >= MAGNETIC_FIELD_EXTREME_MIN_UT && magnitude <= MAGNETIC_FIELD_EXTREME_MAX_UT;
+}
+
+function getMaxHeadingStep(accuracy: number | null) {
+  if (accuracy === 0 || accuracy === 1) {
+    return 18;
+  }
+
+  if (accuracy === 2) {
+    return 30;
+  }
+
+  return 48;
+}
+
 function animateRotation(value: Animated.Value, rotationRef: { current: number }, target: number) {
-  value.stopAnimation((currentRotation) => {
-    const nextRotation = getShortestRotation(currentRotation, target);
-    const delta = getAngleDelta(currentRotation, nextRotation);
+  const nextRotation = getShortestRotation(rotationRef.current, target);
+  const delta = getAngleDelta(rotationRef.current, nextRotation);
 
-    if (Math.abs(delta) < 0.35) {
-      rotationRef.current = currentRotation;
-      return;
-    }
+  if (Math.abs(delta) < 0.35) {
+    return;
+  }
 
-    rotationRef.current = nextRotation;
+  rotationRef.current = nextRotation;
+  value.stopAnimation();
 
-    Animated.timing(value, {
-      duration: ROTATION_ANIMATION_MS,
-      easing: Easing.out(Easing.cubic),
-      toValue: nextRotation,
-      useNativeDriver: Platform.OS !== 'web',
-    }).start();
-  });
+  Animated.timing(value, {
+    duration: ROTATION_ANIMATION_MS,
+    easing: Easing.out(Easing.cubic),
+    toValue: nextRotation,
+    useNativeDriver: Platform.OS !== 'web',
+  }).start();
 }
 
 function rotationInterpolation(value: Animated.Value) {
@@ -132,23 +163,86 @@ function KaabaMarker() {
 
 export default function CompassScreen() {
   const { settings } = useAppSettings() as AppSettingsValue;
-  const [heading, setHeading] = useState(0);
   const {
-    arrowAngle: arrowTarget,
     coords,
-    dialAngle: dialTarget,
     finalHexAngle,
     selectedCity,
-  } = useQibla(settings.selectedCityId, heading);
+  } = useQibla(settings.selectedCityId, 0);
   const [sensorAvailable, setSensorAvailable] = useState(Platform.OS !== 'web');
   const [isAligned, setIsAligned] = useState(false);
+  const [needsCalibration, setNeedsCalibration] = useState(false);
   const dialRotation = useRef(new Animated.Value(0)).current;
   const arrowRotation = useRef(new Animated.Value(0)).current;
   const dialRotationRef = useRef(0);
   const arrowRotationRef = useRef(0);
   const headingRef = useRef(0);
-  const magnetometerVectorRef = useRef<{ x: number; y: number } | null>(null);
+  const qiblaBearingRef = useRef(finalHexAngle);
+  const magnetometerVectorRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  const trueHeadingCorrectionRef = useRef(0);
+  const lastMagnetometerHeadingRef = useRef<number | null>(null);
+  const magnetometerAvailableRef = useRef(false);
+  const needsCalibrationRef = useRef(false);
   const alignedRef = useRef(false);
+
+  function setCalibrationState(nextNeedsCalibration: boolean) {
+    if (needsCalibrationRef.current === nextNeedsCalibration) {
+      return;
+    }
+
+    needsCalibrationRef.current = nextNeedsCalibration;
+    setNeedsCalibration(nextNeedsCalibration);
+  }
+
+  function updateAlignment(arrowAngle: number) {
+    const nextAligned = getAbsoluteAngleDelta(arrowAngle, 0) <= ALIGNMENT_TOLERANCE_DEGREES;
+
+    if (nextAligned === alignedRef.current) {
+      return;
+    }
+
+    alignedRef.current = nextAligned;
+    setIsAligned(nextAligned);
+
+    if (nextAligned && Platform.OS !== 'web') {
+      Vibration.vibrate(ALIGNMENT_VIBRATION_MS);
+    }
+  }
+
+  function updateCompassRotations(nextHeading: number) {
+    const qiblaBearing = qiblaBearingRef.current;
+    const dialTarget = normalizeDegrees(-nextHeading);
+    const arrowTarget = normalizeDegrees(qiblaBearing - nextHeading);
+
+    animateRotation(dialRotation, dialRotationRef, dialTarget);
+    animateRotation(arrowRotation, arrowRotationRef, arrowTarget);
+    updateAlignment(arrowTarget);
+  }
+
+  function updateTrueHeadingCorrection(magneticHeading: number, trueHeading: number) {
+    const currentCorrection = trueHeadingCorrectionRef.current;
+    const targetCorrection = normalizeDegrees(trueHeading - magneticHeading);
+    const correctionDelta = getAngleDelta(currentCorrection, targetCorrection);
+
+    trueHeadingCorrectionRef.current = normalizeDegrees(currentCorrection + correctionDelta * 0.24);
+  }
+
+  function applyFilteredHeading(nextHeading: number, accuracy: number | null) {
+    const currentHeading = headingRef.current;
+    const delta = getAngleDelta(currentHeading, nextHeading);
+    const absDelta = Math.abs(delta);
+
+    if (absDelta < HEADING_NOISE_FLOOR) {
+      return;
+    }
+
+    const smoothing = getHeadingSmoothing(delta);
+    const maxStep = getMaxHeadingStep(accuracy);
+    const filteredDelta = Math.sign(delta) * Math.min(absDelta * smoothing, maxStep);
+    const smoothedHeading = normalizeDegrees(currentHeading + filteredDelta);
+
+    headingRef.current = smoothedHeading;
+    updateCompassRotations(smoothedHeading);
+  }
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -156,24 +250,54 @@ export default function CompassScreen() {
       return undefined;
     }
 
-    let subscription: { remove: () => void } | null = null;
+    let magnetometerSubscription: { remove: () => void } | null = null;
+    let headingSubscription: Location.LocationSubscription | null = null;
     let isMounted = true;
 
     async function subscribe() {
-      const available = await Magnetometer.isAvailableAsync();
+      const [magnetometerAvailable, locationPermission] = await Promise.all([
+        Magnetometer.isAvailableAsync(),
+        Location.requestForegroundPermissionsAsync(),
+      ]);
 
       if (!isMounted) {
         return;
       }
 
-      setSensorAvailable(available);
+      setSensorAvailable(magnetometerAvailable);
+      magnetometerAvailableRef.current = magnetometerAvailable;
 
-      if (!available) {
+      if (locationPermission.status === 'granted') {
+        headingSubscription = await Location.watchHeadingAsync((nextHeading) => {
+          const headingValue =
+            nextHeading.trueHeading >= 0 ? nextHeading.trueHeading : nextHeading.magHeading;
+
+          if (!Number.isFinite(headingValue) || headingValue < 0) {
+            return;
+          }
+
+          setCalibrationState(nextHeading.accuracy <= 1);
+          const normalizedHeading = normalizeDegrees(headingValue);
+
+          if (nextHeading.trueHeading >= 0 && nextHeading.magHeading >= 0) {
+            updateTrueHeadingCorrection(
+              normalizeDegrees(nextHeading.magHeading),
+              normalizeDegrees(nextHeading.trueHeading)
+            );
+          }
+
+          if (!magnetometerAvailableRef.current || lastMagnetometerHeadingRef.current === null) {
+            applyFilteredHeading(normalizedHeading, nextHeading.accuracy);
+          }
+        });
+      }
+
+      if (!magnetometerAvailable) {
         return;
       }
 
       Magnetometer.setUpdateInterval(SENSOR_INTERVAL_MS);
-      subscription = Magnetometer.addListener((data) => {
+      magnetometerSubscription = Magnetometer.addListener((data) => {
         const previousVector = magnetometerVectorRef.current;
         const smoothedVector = previousVector
           ? {
@@ -183,25 +307,30 @@ export default function CompassScreen() {
               y:
                 previousVector.y +
                 (data.y - previousVector.y) * MAGNETOMETER_VECTOR_SMOOTHING,
+              z:
+                previousVector.z +
+                (data.z - previousVector.z) * MAGNETOMETER_VECTOR_SMOOTHING,
             }
-          : { x: data.x, y: data.y };
+          : { x: data.x, y: data.y, z: data.z };
 
         magnetometerVectorRef.current = smoothedVector;
 
-        const nextHeading = getHeadingFromMagnetometer(smoothedVector);
-        const delta = getAngleDelta(headingRef.current, nextHeading);
+        const fieldMagnitude = getMagneticFieldMagnitude(smoothedVector);
+        const reliableField = isMagneticFieldReliable(fieldMagnitude);
 
-        if (Math.abs(delta) < HEADING_NOISE_FLOOR) {
+        setCalibrationState(!reliableField);
+
+        if (!isMagneticFieldUsable(fieldMagnitude)) {
           return;
         }
 
-        const smoothing = getHeadingSmoothing(delta);
-        const smoothedHeading = normalizeDegrees(
-          headingRef.current + delta * smoothing
+        const magneticHeading = getHeadingFromMagnetometer(smoothedVector);
+        lastMagnetometerHeadingRef.current = magneticHeading;
+        const correctedHeading = normalizeDegrees(
+          magneticHeading + trueHeadingCorrectionRef.current
         );
 
-        headingRef.current = smoothedHeading;
-        setHeading(Number(smoothedHeading.toFixed(1)));
+        applyFilteredHeading(correctedHeading, reliableField ? 3 : 1);
       });
     }
 
@@ -213,33 +342,19 @@ export default function CompassScreen() {
 
     return () => {
       isMounted = false;
-      subscription?.remove();
+      headingSubscription?.remove();
+      magnetometerSubscription?.remove();
     };
   }, []);
 
   const sourceLabel =
     coords.source === 'gps' ? 'GPS' : getCityName(selectedCity, settings.language);
   const roundedBearing = Math.round(finalHexAngle);
-  const roundedHeading = Math.round(heading);
-  const alignmentDelta = getAbsoluteAngleDelta(arrowTarget, 0);
 
   useEffect(() => {
-    animateRotation(dialRotation, dialRotationRef, dialTarget);
-    animateRotation(arrowRotation, arrowRotationRef, arrowTarget);
-  }, [arrowRotation, arrowTarget, dialRotation, dialTarget]);
-
-  useEffect(() => {
-    const nextAligned = alignmentDelta <= ALIGNMENT_TOLERANCE_DEGREES;
-
-    if (nextAligned !== alignedRef.current) {
-      alignedRef.current = nextAligned;
-      setIsAligned(nextAligned);
-
-      if (nextAligned && Platform.OS !== 'web') {
-        Vibration.vibrate(ALIGNMENT_VIBRATION_MS);
-      }
-    }
-  }, [alignmentDelta]);
+    qiblaBearingRef.current = finalHexAngle;
+    updateCompassRotations(headingRef.current);
+  }, [finalHexAngle]);
 
   const dialRotate = rotationInterpolation(dialRotation);
   const arrowRotate = rotationInterpolation(arrowRotation);
@@ -271,8 +386,23 @@ export default function CompassScreen() {
         </View>
 
         <View style={styles.content}>
-          <Text style={styles.degreeTitle}>{roundedHeading}°</Text>
-          <Text style={styles.locationText}>Кибла: {roundedBearing}° · {sourceLabel}</Text>
+          <Text style={styles.degreeTitle}>{roundedBearing}°</Text>
+          <Text
+            style={[
+              styles.locationText,
+              !needsCalibration && styles.locationTextWithoutBanner,
+            ]}
+          >
+            Кибла: {roundedBearing}° · {sourceLabel}
+          </Text>
+
+          {needsCalibration && (
+            <View style={styles.calibrationBanner}>
+              <Text style={styles.calibrationText}>
+                Покрутите телефон в воздухе по траектории восьмерки для калибровки компаса
+              </Text>
+            </View>
+          )}
 
           <View style={styles.compassBox}>
             <View style={styles.outerHalo} />
@@ -415,7 +545,27 @@ const styles = StyleSheet.create({
     color: 'rgba(245, 247, 250, 0.48)',
     fontFamily: FONTS.regular,
     fontSize: 13,
+    marginBottom: 14,
+  },
+  locationTextWithoutBanner: {
     marginBottom: 36,
+  },
+  calibrationBanner: {
+    backgroundColor: 'rgba(18, 18, 18, 0.78)',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 22,
+    maxWidth: 310,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  calibrationText: {
+    color: 'rgba(245, 247, 250, 0.76)',
+    fontFamily: FONTS.regular,
+    fontSize: 12,
+    lineHeight: 16,
+    textAlign: 'center',
   },
   compassBox: {
     alignItems: 'center',
