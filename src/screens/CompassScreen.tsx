@@ -1,6 +1,5 @@
 ﻿import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
-import { Magnetometer } from 'expo-sensors';
 import { useEffect, useRef, useState } from 'react';
 import {
   Platform,
@@ -24,16 +23,11 @@ import { useAppSettings } from '../context/AppSettingsContext';
 import { normalizeDegrees, useQibla } from '../hooks/useQibla';
 
 const COMPASS_SIZE = 326;
-const SENSOR_INTERVAL_MS = 16;
-const MAGNETOMETER_VECTOR_SMOOTHING = 0.38;
-const HEADING_NOISE_FLOOR = 0.22;
-const MAGNETIC_FIELD_MIN_UT = 25;
-const MAGNETIC_FIELD_MAX_UT = 70;
-const MAGNETIC_FIELD_EXTREME_MIN_UT = 10;
-const MAGNETIC_FIELD_EXTREME_MAX_UT = 120;
+const HEADING_NOISE_FLOOR = 0.12;
+const LOW_ACCURACY_SAMPLE_LIMIT = 8;
 const ALIGNMENT_TOLERANCE_DEGREES = 3;
 const ALIGNMENT_VIBRATION_MS = 85;
-const ROTATION_ANIMATION_MS = 42;
+const ROTATION_ANIMATION_MS = 58;
 const TICKS = Array.from({ length: 72 }, (_, index) => index * 5);
 const DEGREE_LABELS = Array.from({ length: 12 }, (_, index) => index * 30);
 
@@ -43,10 +37,6 @@ type AppSettingsValue = {
     selectedCityId: string;
   };
 };
-
-function toDegrees(radians: number) {
-  return (radians * 180) / Math.PI;
-}
 
 function getShortestRotation(current: number, target: number) {
   const delta = ((target - current + 540) % 360) - 180;
@@ -64,51 +54,39 @@ function getAbsoluteAngleDelta(from: number, to: number) {
 function getHeadingSmoothing(delta: number) {
   const absDelta = Math.abs(delta);
 
-  if (absDelta > 80) {
-    return 0.95;
+  if (absDelta > 95) {
+    return 0.86;
   }
 
-  if (absDelta > 35) {
-    return 0.78;
+  if (absDelta > 45) {
+    return 0.66;
   }
 
-  if (absDelta > 12) {
-    return 0.58;
+  if (absDelta > 16) {
+    return 0.44;
   }
 
   if (absDelta > 4) {
-    return 0.42;
+    return 0.28;
   }
 
-  return 0.3;
-}
-
-function getHeadingFromMagnetometer({ x, y }: { x: number; y: number }) {
-  return normalizeDegrees(toDegrees(Math.atan2(y, x)) - 90);
-}
-
-function getMagneticFieldMagnitude({ x, y, z }: { x: number; y: number; z: number }) {
-  return Math.sqrt(x * x + y * y + z * z);
-}
-
-function isMagneticFieldReliable(magnitude: number) {
-  return magnitude >= MAGNETIC_FIELD_MIN_UT && magnitude <= MAGNETIC_FIELD_MAX_UT;
-}
-
-function isMagneticFieldUsable(magnitude: number) {
-  return magnitude >= MAGNETIC_FIELD_EXTREME_MIN_UT && magnitude <= MAGNETIC_FIELD_EXTREME_MAX_UT;
+  return 0.18;
 }
 
 function getMaxHeadingStep(accuracy: number | null) {
-  if (accuracy === 0 || accuracy === 1) {
-    return 18;
+  if (accuracy === 0) {
+    return 14;
+  }
+
+  if (accuracy === 1) {
+    return 26;
   }
 
   if (accuracy === 2) {
-    return 30;
+    return 44;
   }
 
-  return 48;
+  return 68;
 }
 
 function animateRotation(value: SharedValue<number>, rotationRef: { current: number }, target: number) {
@@ -171,10 +149,7 @@ export default function CompassScreen() {
   const arrowRotationRef = useRef(0);
   const headingRef = useRef(0);
   const qiblaBearingRef = useRef(finalHexAngle);
-  const magnetometerVectorRef = useRef<{ x: number; y: number; z: number } | null>(null);
-  const trueHeadingCorrectionRef = useRef(0);
-  const lastMagnetometerHeadingRef = useRef<number | null>(null);
-  const magnetometerAvailableRef = useRef(false);
+  const lowAccuracySampleCountRef = useRef(0);
   const needsCalibrationRef = useRef(false);
   const alignedRef = useRef(false);
 
@@ -212,14 +187,6 @@ export default function CompassScreen() {
     updateAlignment(arrowTarget);
   }
 
-  function updateTrueHeadingCorrection(magneticHeading: number, trueHeading: number) {
-    const currentCorrection = trueHeadingCorrectionRef.current;
-    const targetCorrection = normalizeDegrees(trueHeading - magneticHeading);
-    const correctionDelta = getAngleDelta(currentCorrection, targetCorrection);
-
-    trueHeadingCorrectionRef.current = normalizeDegrees(currentCorrection + correctionDelta * 0.24);
-  }
-
   function applyFilteredHeading(nextHeading: number, accuracy: number | null) {
     const currentHeading = headingRef.current;
     const delta = getAngleDelta(currentHeading, nextHeading);
@@ -244,87 +211,39 @@ export default function CompassScreen() {
       return undefined;
     }
 
-    let magnetometerSubscription: { remove: () => void } | null = null;
     let headingSubscription: Location.LocationSubscription | null = null;
     let isMounted = true;
 
     async function subscribe() {
-      const [magnetometerAvailable, locationPermission] = await Promise.all([
-        Magnetometer.isAvailableAsync(),
-        Location.requestForegroundPermissionsAsync(),
-      ]);
+      const locationPermission = await Location.requestForegroundPermissionsAsync();
 
       if (!isMounted) {
         return;
       }
 
-      setSensorAvailable(magnetometerAvailable);
-      magnetometerAvailableRef.current = magnetometerAvailable;
-
-      if (locationPermission.status === 'granted') {
-        headingSubscription = await Location.watchHeadingAsync((nextHeading) => {
-          const headingValue =
-            nextHeading.trueHeading >= 0 ? nextHeading.trueHeading : nextHeading.magHeading;
-
-          if (!Number.isFinite(headingValue) || headingValue < 0) {
-            return;
-          }
-
-          setCalibrationState(nextHeading.accuracy <= 1);
-          const normalizedHeading = normalizeDegrees(headingValue);
-
-          if (nextHeading.trueHeading >= 0 && nextHeading.magHeading >= 0) {
-            updateTrueHeadingCorrection(
-              normalizeDegrees(nextHeading.magHeading),
-              normalizeDegrees(nextHeading.trueHeading)
-            );
-          }
-
-          if (!magnetometerAvailableRef.current || lastMagnetometerHeadingRef.current === null) {
-            applyFilteredHeading(normalizedHeading, nextHeading.accuracy);
-          }
-        });
-      }
-
-      if (!magnetometerAvailable) {
+      if (locationPermission.status !== 'granted') {
+        setSensorAvailable(false);
         return;
       }
 
-      Magnetometer.setUpdateInterval(SENSOR_INTERVAL_MS);
-      magnetometerSubscription = Magnetometer.addListener((data) => {
-        const previousVector = magnetometerVectorRef.current;
-        const smoothedVector = previousVector
-          ? {
-              x:
-                previousVector.x +
-                (data.x - previousVector.x) * MAGNETOMETER_VECTOR_SMOOTHING,
-              y:
-                previousVector.y +
-                (data.y - previousVector.y) * MAGNETOMETER_VECTOR_SMOOTHING,
-              z:
-                previousVector.z +
-                (data.z - previousVector.z) * MAGNETOMETER_VECTOR_SMOOTHING,
-            }
-          : { x: data.x, y: data.y, z: data.z };
+      setSensorAvailable(true);
+      headingSubscription = await Location.watchHeadingAsync((nextHeading) => {
+        const headingValue =
+          nextHeading.trueHeading >= 0 ? nextHeading.trueHeading : nextHeading.magHeading;
 
-        magnetometerVectorRef.current = smoothedVector;
-
-        const fieldMagnitude = getMagneticFieldMagnitude(smoothedVector);
-        const reliableField = isMagneticFieldReliable(fieldMagnitude);
-
-        setCalibrationState(!reliableField);
-
-        if (!isMagneticFieldUsable(fieldMagnitude)) {
+        if (!Number.isFinite(headingValue) || headingValue < 0) {
           return;
         }
 
-        const magneticHeading = getHeadingFromMagnetometer(smoothedVector);
-        lastMagnetometerHeadingRef.current = magneticHeading;
-        const correctedHeading = normalizeDegrees(
-          magneticHeading + trueHeadingCorrectionRef.current
-        );
+        if (nextHeading.accuracy === 0) {
+          lowAccuracySampleCountRef.current += 1;
+        } else {
+          lowAccuracySampleCountRef.current = 0;
+        }
 
-        applyFilteredHeading(correctedHeading, reliableField ? 3 : 1);
+        setCalibrationState(lowAccuracySampleCountRef.current >= LOW_ACCURACY_SAMPLE_LIMIT);
+
+        applyFilteredHeading(normalizeDegrees(headingValue), nextHeading.accuracy);
       });
     }
 
@@ -337,7 +256,6 @@ export default function CompassScreen() {
     return () => {
       isMounted = false;
       headingSubscription?.remove();
-      magnetometerSubscription?.remove();
     };
   }, []);
 

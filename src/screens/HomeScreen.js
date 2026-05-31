@@ -70,6 +70,7 @@ export default function HomeScreen() {
   );
 
   const dayKey = getPrayerDateKey(now);
+  const widgetMinuteKey = Math.floor(now.getTime() / 60000);
   const dayDate = useMemo(() => getPrayerDate(now), [dayKey]);
   const tomorrowDate = useMemo(() => getPrayerDate(now, 1), [dayKey]);
   const scheduleOptions = useMemo(
@@ -161,7 +162,7 @@ export default function HomeScreen() {
     if (selectedCity) {
       updatePrayerWidget(settings).catch(() => {});
     }
-  }, [dayKey, selectedCity, settings]);
+  }, [dayKey, selectedCity, settings, widgetMinuteKey]);
 
   const locationLabel = useMemo(() => {
     const cityName = getCityName(selectedCity, language);
